@@ -1,0 +1,66 @@
+name: Importar NOX do site publicado
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/importar-nox.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: importar-nox
+  cancel-in-progress: false
+
+jobs:
+  importar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Baixar versão publicada
+        shell: bash
+        env:
+          SOURCE_URL: https://nox-pequeno-cataclismo-jf.savorykite34.chatgpt.site/
+          SOURCE_HOST: nox-pequeno-cataclismo-jf.savorykite34.chatgpt.site
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/nox-mirror"
+          wget --mirror --page-requisites --convert-links --adjust-extension \
+            --no-parent --domains "$SOURCE_HOST" --execute robots=off \
+            --timeout=40 --tries=3 --level=8 \
+            --directory-prefix="$RUNNER_TEMP/nox-mirror" \
+            "$SOURCE_URL" || true
+          SRC="$RUNNER_TEMP/nox-mirror/$SOURCE_HOST"
+          if [ ! -s "$SRC/index.html" ]; then
+            echo "::error::O site nao entregou index.html. A importacao nao alterou o projeto."
+            exit 1
+          fi
+          if ! grep -qi 'nox' "$SRC/index.html"; then
+            echo "::error::A resposta nao parece ser o jogo NOX. A importacao foi interrompida."
+            exit 1
+          fi
+          # Copia apenas arquivos do site de origem para a raiz do repo.
+          cp -a "$SRC/." "$GITHUB_WORKSPACE/"
+          if [ ! -s index.html ]; then exit 1; fi
+          echo "Arquivos recebidos:"
+          find . -type f -not -path './.git/*' | wc -l
+          du -sh .
+      - name: Publicar arquivos no repositorio
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A index.html assets js css fonts public static 2>/dev/null || git add -A -- ':!.github/workflows/*'
+          if git diff --cached --quiet; then
+            echo "Nenhum novo arquivo para publicar."
+            exit 0
+          fi
+          git commit -m "Publicar NOX recuperado do site ativo"
+          git push origin HEAD:main
